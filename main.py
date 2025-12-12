@@ -9,9 +9,18 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QColor
 
+class NumericTableWidgetItem(QTableWidgetItem):
+    def __lt__(self, other):
+        try:
+            val1 = float(self.text().replace('$', '').replace(',', ''))
+            val2 = float(other.text().replace('$', '').replace(',', ''))
+            return val1 < val2
+        except ValueError:
+            return super().__lt__(other)
+
 # Clase para la base de datos
 class DataBase:
-    def __init__(self, db_name="db_recetario.db"): # Cambio realizado: nombre de la BD actualizado
+    def __init__(self, db_name="db_recetario.db"):
         self.conn = sqlite3.connect(db_name)
         self.conn.execute("PRAGMA foreign_keys = 1")
         self.cursor = self.conn.cursor()
@@ -103,9 +112,9 @@ class SistemaCafeApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.db = DataBase()
-        self.setWindowTitle("Sistema Café - Recetario y Gestión de Insumos")
+        self.setWindowTitle("Sistema Café ERP 2.0")
         self.setGeometry(50, 50, 1200, 800)
-        
+        self.insumo_id_editar = None
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
         
@@ -118,15 +127,27 @@ class SistemaCafeApp(QMainWindow):
                 margin: 2px; 
                 border-top-left-radius: 8px; 
                 border-top-right-radius: 8px;
-                font-size: 14px;
+                font-size: 16px; 
                 min-width: 150px;
             }
             QTabBar::tab:selected { background: #007BFF; color: white; font-weight: bold; }
-            QLabel { font-size: 14px; }
-            QLineEdit, QComboBox { padding: 6px; font-size: 14px; }
-            QPushButton { background-color: #28a745; color: white; padding: 10px; border-radius: 5px; font-weight: bold; }
+            
+            QLabel { font-size: 16px; } 
+            QLineEdit, QComboBox { padding: 6px; font-size: 16px; } 
+            QGroupBox { font-size: 16px; font-weight: bold; } 
+            
+            QPushButton { 
+                background-color: #28a745; 
+                color: white; 
+                padding: 10px; 
+                border-radius: 5px; 
+                font-weight: bold; 
+                font-size: 16px; 
+            }
             QPushButton:hover { background-color: #218838; }
-            QTableWidget { font-size: 13px; }
+            
+            QTableWidget { font-size: 15px; } 
+            QHeaderView::section { font-size: 15px; font-weight: bold; } 
         """)
 
         self.init_tab_insumos()
@@ -140,15 +161,13 @@ class SistemaCafeApp(QMainWindow):
         layout = QHBoxLayout()
         
         # Panel formulario
-        form_panel = QGroupBox("Insumos")
+        form_panel = QGroupBox("Gestión de Insumos")
         form_layout = QVBoxLayout()
         
         # Inputs
         self.ins_nombre = QLineEdit()
         self.ins_costo = QLineEdit()
-        # Quitamos placeholder
         self.ins_cant_envase = QLineEdit()
-        # Quitamos placeholder
 
         # Combos de unidades
         self.cmb_uni_compra = QComboBox()
@@ -161,7 +180,6 @@ class SistemaCafeApp(QMainWindow):
         # Input conversion
         self.lbl_factor = QLabel("Conversión:")
         self.ins_factor = QLineEdit()
-        # Quitamos placeholder
         self.container_factor = QWidget()
         lay_factor = QHBoxLayout()
         lay_factor.addWidget(self.lbl_factor)
@@ -169,9 +187,18 @@ class SistemaCafeApp(QMainWindow):
         self.container_factor.setLayout(lay_factor)
         self.container_factor.setVisible(False)
 
-        # Boton guardar
-        btn_add = QPushButton("Calcular y Guardar Insumo")
-        btn_add.clicked.connect(self.guardar_insumo)
+        # Botones CRUD
+        self.btn_guardar = QPushButton("Guardar Insumo")
+        self.btn_guardar.clicked.connect(self.guardar_insumo)
+
+        self.btn_cancelar = QPushButton("Cancelar / Limpiar")
+        self.btn_cancelar.setStyleSheet("background-color: #6c757d;")
+        self.btn_cancelar.clicked.connect(self.limpiar_formulario_insumos)
+
+        # Layout de botones de acción
+        lay_btns = QHBoxLayout()
+        lay_btns.addWidget(self.btn_guardar)
+        lay_btns.addWidget(self.btn_cancelar)
 
         # Layout del form
         fl = QFormLayout()
@@ -183,32 +210,71 @@ class SistemaCafeApp(QMainWindow):
         
         form_layout.addLayout(fl)
         form_layout.addWidget(self.container_factor)
-        form_layout.addWidget(btn_add)
+        form_layout.addLayout(lay_btns)
         form_layout.addStretch()
         form_panel.setLayout(form_layout)
 
-        # Tabla de datos
+        # Panel Tabla + Botones de Tabla
+        right_layout = QVBoxLayout()
+        
         self.tabla_insumos = QTableWidget()
         cols = ["ID", "Insumo", "Envase", "Costo", "Conv.", "Rendimiento", "Costo Unitario"]
         self.tabla_insumos.setColumnCount(len(cols))
         self.tabla_insumos.setHorizontalHeaderLabels(cols)
         self.tabla_insumos.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        
+        # Configuración de tabla
+        self.tabla_insumos.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.tabla_insumos.setSortingEnabled(True)
+
+        # Selección de fila completa
+        self.tabla_insumos.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.tabla_insumos.setSelectionMode(QAbstractItemView.SingleSelection)
+
+        # Botones para Editar/Eliminar
+        hbox_crud = QHBoxLayout()
+        btn_editar = QPushButton("Editar Seleccionado")
+        btn_editar.setStyleSheet("background-color: #ffc107; color: black;")
+        btn_editar.clicked.connect(self.cargar_para_editar)
+        
+        btn_eliminar = QPushButton("Eliminar Seleccionado")
+        btn_eliminar.setStyleSheet("background-color: #dc3545;")
+        btn_eliminar.clicked.connect(self.eliminar_insumo)
+        
+        hbox_crud.addWidget(btn_editar)
+        hbox_crud.addWidget(btn_eliminar)
+
+        right_layout.addWidget(self.tabla_insumos)
+        right_layout.addLayout(hbox_crud)
 
         layout.addWidget(form_panel, 1)
-        layout.addWidget(self.tabla_insumos, 2)
+        layout.addLayout(right_layout, 2)
         tab.setLayout(layout)
         self.tabs.addTab(tab, "INSUMOS")
+        
+        self.cargar_unidades_combo()
+        self.cargar_tabla_insumos()
 
     def cargar_unidades_combo(self):
+        id_compra_prev = self.cmb_uni_compra.currentData()
+        id_uso_prev = self.cmb_uni_uso.currentData()
+        
         self.cmb_uni_compra.clear()
         self.cmb_uni_uso.clear()
         unis = self.db.traer_datos("SELECT id, nombre FROM unidades")
         for u in unis:
             self.cmb_uni_compra.addItem(u[1], u[0])
             self.cmb_uni_uso.addItem(u[1], u[0])
+            
+        # Restaurar si es posible
+        if id_compra_prev: 
+            idx = self.cmb_uni_compra.findData(id_compra_prev)
+            if idx >= 0: self.cmb_uni_compra.setCurrentIndex(idx)
+        if id_uso_prev:
+            idx = self.cmb_uni_uso.findData(id_uso_prev)
+            if idx >= 0: self.cmb_uni_uso.setCurrentIndex(idx)
 
     def verificar_conversion(self):
-        # Checar si las unidades son distintas
         id_compra = self.cmb_uni_compra.currentData()
         id_uso = self.cmb_uni_uso.currentData()
         
@@ -220,15 +286,82 @@ class SistemaCafeApp(QMainWindow):
         else:
             self.container_factor.setVisible(False)
 
+    def limpiar_formulario_insumos(self):
+        self.ins_nombre.clear()
+        self.ins_costo.clear()
+        self.ins_cant_envase.clear()
+        self.ins_factor.clear()
+        self.insumo_id_editar = None
+        self.btn_guardar.setText("Guardar Insumo")
+        self.btn_guardar.setStyleSheet("background-color: #28a745; color: white;") # Verde
+        self.tabla_insumos.clearSelection()
+
+    def cargar_para_editar(self):
+        rows = self.tabla_insumos.selectionModel().selectedRows()
+        if not rows:
+            QMessageBox.warning(self, "Aviso", "Selecciona un insumo de la tabla para editar.")
+            return
+        
+        row = rows[0].row()
+        id_insumo = self.tabla_insumos.item(row, 0).text() 
+        
+        data = self.db.traer_datos("SELECT * FROM insumos WHERE id=?", (id_insumo,))
+        if not data:
+            return
+        
+        reg = data[0]
+        
+        self.insumo_id_editar = reg[0]
+        self.ins_nombre.setText(reg[1])
+        
+        idx_compra = self.cmb_uni_compra.findData(reg[2])
+        if idx_compra >= 0: self.cmb_uni_compra.setCurrentIndex(idx_compra)
+            
+        idx_uso = self.cmb_uni_uso.findData(reg[3])
+        if idx_uso >= 0: self.cmb_uni_uso.setCurrentIndex(idx_uso)
+            
+        self.ins_cant_envase.setText(str(reg[4]))
+        self.ins_costo.setText(str(reg[5]))
+        self.ins_factor.setText(str(reg[6]))
+        
+        self.btn_guardar.setText("Actualizar Insumo")
+        self.btn_guardar.setStyleSheet("background-color: #007bff; color: white;") # Azul
+
+    def eliminar_insumo(self):
+        rows = self.tabla_insumos.selectionModel().selectedRows()
+        if not rows:
+            QMessageBox.warning(self, "Aviso", "Selecciona un insumo para eliminar.")
+            return
+            
+        row = rows[0].row()
+        id_insumo = self.tabla_insumos.item(row, 0).text()
+        nombre = self.tabla_insumos.item(row, 1).text()
+        
+        confirm = QMessageBox.question(self, "Confirmar", 
+                                     f"¿Estás seguro de eliminar '{nombre}'?\nEsto podría afectar recetas que lo usen.",
+                                     QMessageBox.Yes | QMessageBox.No)
+        
+        if confirm == QMessageBox.Yes:
+            res = self.db.ejecutar("DELETE FROM insumos WHERE id=?", (id_insumo,))
+            if res:
+                self.cargar_tabla_insumos()
+                self.limpiar_formulario_insumos()
+                QMessageBox.information(self, "Eliminado", "Insumo eliminado correctamente.")
+            else:
+                QMessageBox.critical(self, "Error", "No se pudo eliminar. Puede que esté en uso en alguna receta.")
+
     def guardar_insumo(self):
         try:
             nombre = self.ins_nombre.text()
+            if not nombre:
+                QMessageBox.warning(self, "Error", "Falta el nombre.")
+                return
+
             costo_envase = float(self.ins_costo.text())
             cant_envase = float(self.ins_cant_envase.text())
             id_compra = self.cmb_uni_compra.currentData()
             id_uso = self.cmb_uni_uso.currentData()
             
-            # Calcular conversion
             factor = 1.0
             if id_compra != id_uso:
                 if not self.ins_factor.text():
@@ -237,33 +370,37 @@ class SistemaCafeApp(QMainWindow):
                 factor = float(self.ins_factor.text())
             
             rendimiento_bruto = cant_envase * factor
-            
-            # Redondeo
             rendimiento_real = math.floor(rendimiento_bruto)
             
             if rendimiento_real == 0:
                 QMessageBox.warning(self, "Error", "El rendimiento da 0.")
                 return
 
-            # Costo unitario
             costo_unitario = costo_envase / rendimiento_real
 
-            # Guardar
-            self.db.ejecutar('''INSERT INTO insumos 
-                (nombre, unidad_compra_id, unidad_uso_id, cantidad_envase, costo_envase, factor_conversion, rendimiento_total, costo_unitario)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
-                (nombre, id_compra, id_uso, cant_envase, costo_envase, factor, rendimiento_real, costo_unitario))
+            if self.insumo_id_editar is None:
+                # CREATE
+                self.db.ejecutar('''INSERT INTO insumos 
+                    (nombre, unidad_compra_id, unidad_uso_id, cantidad_envase, costo_envase, factor_conversion, rendimiento_total, costo_unitario)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                    (nombre, id_compra, id_uso, cant_envase, costo_envase, factor, rendimiento_real, costo_unitario))
+                msg = "Insumo creado."
+            else:
+                # UPDATE
+                self.db.ejecutar('''UPDATE insumos SET
+                    nombre=?, unidad_compra_id=?, unidad_uso_id=?, cantidad_envase=?, costo_envase=?, 
+                    factor_conversion=?, rendimiento_total=?, costo_unitario=?
+                    WHERE id=?''',
+                    (nombre, id_compra, id_uso, cant_envase, costo_envase, factor, rendimiento_real, costo_unitario, self.insumo_id_editar))
+                msg = "Insumo actualizado."
 
-            self.ins_nombre.clear()
-            self.ins_costo.clear()
-            self.ins_cant_envase.clear()
-            self.ins_factor.clear()
+            self.limpiar_formulario_insumos()
             self.cargar_tabla_insumos()
             
-            QMessageBox.information(self, "Guardado", f"Listo.\nCosto por {self.cmb_uni_uso.currentText()}: ${costo_unitario:.4f}")
+            QMessageBox.information(self, "Listo", f"{msg}\nCosto por {self.cmb_uni_uso.currentText()}: ${costo_unitario:.4f}")
 
         except ValueError:
-            QMessageBox.warning(self, "Error", "Revisar los números.")
+            QMessageBox.warning(self, "Error", "Revisar los números (costos, cantidades).")
 
     def cargar_tabla_insumos(self):
         query = '''
@@ -279,14 +416,26 @@ class SistemaCafeApp(QMainWindow):
             ORDER BY i.id DESC
         '''
         datos = self.db.traer_datos(query)
+        self.tabla_insumos.setSortingEnabled(False)
         self.tabla_insumos.setRowCount(0)
+        
         for row_idx, row_data in enumerate(datos):
             self.tabla_insumos.insertRow(row_idx)
             for col_idx, col_data in enumerate(row_data):
                 val = str(col_data)
+                
+                # Formato visual para monedas
                 if col_idx == 6: val = f"${col_data:.4f}"
                 if col_idx == 3: val = f"${col_data:.2f}"
-                self.tabla_insumos.setItem(row_idx, col_idx, QTableWidgetItem(val))
+                
+                # Usar NumericTableWidgetItem para columnas numéricas: ID(0), Costo(3), Factor(4), Costo Unitario(6)
+                if col_idx in [0, 3, 4, 6]:
+                    self.tabla_insumos.setItem(row_idx, col_idx, NumericTableWidgetItem(val))
+                else:
+                    self.tabla_insumos.setItem(row_idx, col_idx, QTableWidgetItem(val))
+        
+        # Reactivamos sorting
+        self.tabla_insumos.setSortingEnabled(True)
 
     # Pestaña de config
     def init_tab_config(self):
@@ -383,7 +532,7 @@ class SistemaCafeApp(QMainWindow):
         self.sel_producto = QComboBox()
         self.sel_tamano = QComboBox()
         btn_hab = QPushButton("Asignar Tamaño")
-        btn_hab.setStyleSheet("background-color: #17a2b8;")
+        btn_hab.setStyleSheet("background-color: #17a2b8; font-size: 16px;") 
         btn_hab.clicked.connect(self.habilitar_tamano)
         
         h_sel.addWidget(self.sel_producto, 2)
