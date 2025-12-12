@@ -9,9 +9,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QColor
 
-# =============================================================================
-# 1. GESTOR DE BASE DE DATOS (Backend)
-# =============================================================================
+# Clase para la base de datos
 class DataBase:
     def __init__(self, db_name="sistema_cafe_v2.db"):
         self.conn = sqlite3.connect(db_name)
@@ -20,35 +18,35 @@ class DataBase:
         self.crear_tablas()
 
     def crear_tablas(self):
-        # 1. Tablas de Configuración
+        # Tablas de config
         self.cursor.execute('''CREATE TABLE IF NOT EXISTS categorias (id INTEGER PRIMARY KEY, nombre TEXT)''')
         self.cursor.execute('''CREATE TABLE IF NOT EXISTS subcategorias (id INTEGER PRIMARY KEY, nombre TEXT)''')
         self.cursor.execute('''CREATE TABLE IF NOT EXISTS tamanos (id INTEGER PRIMARY KEY, nombre TEXT)''')
         self.cursor.execute('''CREATE TABLE IF NOT EXISTS unidades (id INTEGER PRIMARY KEY, nombre TEXT)''')
         
-        # 2. Insumos
+        # Tabla de insumos
         self.cursor.execute('''CREATE TABLE IF NOT EXISTS insumos (
             id INTEGER PRIMARY KEY, 
             nombre TEXT, 
-            unidad_compra_id INTEGER,   -- Ej. Botella, Litro, Galón
-            unidad_uso_id INTEGER,      -- Ej. Onza, Gramo
-            cantidad_envase REAL,       -- Cuanto trae el envase (ej. 1 Litro)
-            costo_envase REAL,          -- Precio de compra
-            factor_conversion REAL,     -- Cuantas u.uso caben en 1 u.compra
-            rendimiento_total REAL,     -- Total de u.uso reales (con redondeo)
-            costo_unitario REAL,        -- Costo de cada u.uso
+            unidad_compra_id INTEGER,
+            unidad_uso_id INTEGER,
+            cantidad_envase REAL,
+            costo_envase REAL,
+            factor_conversion REAL,
+            rendimiento_total REAL,
+            costo_unitario REAL,
             FOREIGN KEY(unidad_compra_id) REFERENCES unidades(id),
             FOREIGN KEY(unidad_uso_id) REFERENCES unidades(id)
         )''')
 
-        # 3. Productos (Cabecera)
+        # Tabla de productos
         self.cursor.execute('''CREATE TABLE IF NOT EXISTS productos (
             id INTEGER PRIMARY KEY, 
             nombre TEXT, 
             instrucciones TEXT
         )''')
 
-        # 4. Relaciones
+        # Tablas intermedias
         self.cursor.execute('''CREATE TABLE IF NOT EXISTS prod_cat (
             prod_id INTEGER, cat_id INTEGER,
             FOREIGN KEY(prod_id) REFERENCES productos(id),
@@ -60,7 +58,7 @@ class DataBase:
             FOREIGN KEY(subcat_id) REFERENCES subcategorias(id)
         )''')
 
-        # 5. Configuración de Receta
+        # Config de la receta
         self.cursor.execute('''CREATE TABLE IF NOT EXISTS receta_config (
             id INTEGER PRIMARY KEY,
             producto_id INTEGER,
@@ -70,7 +68,7 @@ class DataBase:
             FOREIGN KEY(tamano_id) REFERENCES tamanos(id)
         )''')
 
-        # 6. Ingredientes de la Receta
+        # Ingredientes
         self.cursor.execute('''CREATE TABLE IF NOT EXISTS receta_ingredientes (
             receta_config_id INTEGER,
             insumo_id INTEGER,
@@ -79,7 +77,7 @@ class DataBase:
             FOREIGN KEY(insumo_id) REFERENCES insumos(id)
         )''')
         
-        # Seed inicial de unidades si está vacía
+        # Datos iniciales
         self.cursor.execute("SELECT count(*) FROM unidades")
         if self.cursor.fetchone()[0] == 0:
             unidades_base = ["Pieza", "Litro", "Galón", "Onza (oz)", "Gramo (gr)", "Mililitro (ml)", "Kilogramo (kg)"]
@@ -100,10 +98,7 @@ class DataBase:
     def traer_datos(self, query, params=()):
         return self.cursor.execute(query, params).fetchall()
 
-# =============================================================================
-# 2. INTERFAZ GRÁFICA (Frontend)
-# =============================================================================
-
+# Interfaz grafica
 class SistemaCafeApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -114,7 +109,7 @@ class SistemaCafeApp(QMainWindow):
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
         
-        # ESTILO SOLICITADO: Pestañas grandes y espaciadas
+        # Estilos generales
         self.setStyleSheet("""
             QTabWidget::pane { border: 1px solid #AAA; }
             QTabBar::tab { 
@@ -134,42 +129,39 @@ class SistemaCafeApp(QMainWindow):
             QTableWidget { font-size: 13px; }
         """)
 
-        # Inicializar Pestañas
         self.init_tab_insumos()
         self.init_tab_config()
         self.init_tab_productos()
         self.init_tab_visor()
 
-    # -------------------------------------------------------------------------
-    # PESTAÑA 1: INSUMOS
-    # -------------------------------------------------------------------------
+    # Pestaña de insumos
     def init_tab_insumos(self):
         tab = QWidget()
         layout = QHBoxLayout()
         
-        # --- Formulario Izquierdo ---
-        form_panel = QGroupBox("Alta de Insumo y Costeo")
+        # Panel formulario
+        form_panel = QGroupBox("Insumos")
         form_layout = QVBoxLayout()
         
-        # Campos básicos
+        # Inputs
         self.ins_nombre = QLineEdit()
         self.ins_costo = QLineEdit()
-        self.ins_costo.setPlaceholderText("Ej. 150.00")
+        # Quitamos placeholder
         self.ins_cant_envase = QLineEdit()
-        self.ins_cant_envase.setPlaceholderText("Ej. 1 (Si es 1 Litro)")
+        # Quitamos placeholder
 
-        # Selectores de Unidad (Llenados desde DB)
+        # Combos de unidades
         self.cmb_uni_compra = QComboBox()
         self.cmb_uni_uso = QComboBox()
         
-        # Evento para mostrar/ocultar factor de conversión
+        # Conectar cambios
         self.cmb_uni_compra.currentIndexChanged.connect(self.verificar_conversion)
         self.cmb_uni_uso.currentIndexChanged.connect(self.verificar_conversion)
 
-        # Campo de Conversión (Oculto por defecto)
+        # Input conversion
         self.lbl_factor = QLabel("Conversión:")
         self.ins_factor = QLineEdit()
-        self.ins_factor.setPlaceholderText("¿Cuántas onzas tiene 1 Litro?")
+        # Quitamos placeholder
         self.container_factor = QWidget()
         lay_factor = QHBoxLayout()
         lay_factor.addWidget(self.lbl_factor)
@@ -177,11 +169,11 @@ class SistemaCafeApp(QMainWindow):
         self.container_factor.setLayout(lay_factor)
         self.container_factor.setVisible(False)
 
-        # Botón Guardar
+        # Boton guardar
         btn_add = QPushButton("Calcular y Guardar Insumo")
         btn_add.clicked.connect(self.guardar_insumo)
 
-        # Layout del formulario
+        # Layout del form
         fl = QFormLayout()
         fl.addRow("Nombre Insumo:", self.ins_nombre)
         fl.addRow("Costo de Compra ($):", self.ins_costo)
@@ -195,9 +187,8 @@ class SistemaCafeApp(QMainWindow):
         form_layout.addStretch()
         form_panel.setLayout(form_layout)
 
-        # --- Tabla Derecha ---
+        # Tabla de datos
         self.tabla_insumos = QTableWidget()
-        # Columnas solicitadas en punto 6 y 7
         cols = ["ID", "Insumo", "Envase", "Costo", "Conv.", "Rendimiento", "Costo Unitario"]
         self.tabla_insumos.setColumnCount(len(cols))
         self.tabla_insumos.setHorizontalHeaderLabels(cols)
@@ -206,10 +197,9 @@ class SistemaCafeApp(QMainWindow):
         layout.addWidget(form_panel, 1)
         layout.addWidget(self.tabla_insumos, 2)
         tab.setLayout(layout)
-        self.tabs.addTab(tab, "1. INSUMOS Y COSTOS")
+        self.tabs.addTab(tab, "INSUMOS")
 
     def cargar_unidades_combo(self):
-        # Helper para recargar combos
         self.cmb_uni_compra.clear()
         self.cmb_uni_uso.clear()
         unis = self.db.traer_datos("SELECT id, nombre FROM unidades")
@@ -218,7 +208,7 @@ class SistemaCafeApp(QMainWindow):
             self.cmb_uni_uso.addItem(u[1], u[0])
 
     def verificar_conversion(self):
-        # Punto 4: Si unidades son diferentes, pedir conversión
+        # Checar si las unidades son distintas
         id_compra = self.cmb_uni_compra.currentData()
         id_uso = self.cmb_uni_uso.currentData()
         
@@ -238,27 +228,27 @@ class SistemaCafeApp(QMainWindow):
             id_compra = self.cmb_uni_compra.currentData()
             id_uso = self.cmb_uni_uso.currentData()
             
-            # Lógica de conversión y redondeo
+            # Calcular conversion
             factor = 1.0
             if id_compra != id_uso:
                 if not self.ins_factor.text():
-                    QMessageBox.warning(self, "Atención", "Debes ingresar el factor de conversión.")
+                    QMessageBox.warning(self, "Atención", "Falta el factor de conversión.")
                     return
                 factor = float(self.ins_factor.text())
             
             rendimiento_bruto = cant_envase * factor
             
-            # Redondeo hacia abajo (math.floor)
+            # Redondeo
             rendimiento_real = math.floor(rendimiento_bruto)
             
             if rendimiento_real == 0:
-                QMessageBox.warning(self, "Error", "El rendimiento no puede ser 0. Revisa las cantidades.")
+                QMessageBox.warning(self, "Error", "El rendimiento da 0.")
                 return
 
-            # Costo por unidad de medida
+            # Costo unitario
             costo_unitario = costo_envase / rendimiento_real
 
-            # Guardar en BD
+            # Guardar
             self.db.ejecutar('''INSERT INTO insumos 
                 (nombre, unidad_compra_id, unidad_uso_id, cantidad_envase, costo_envase, factor_conversion, rendimiento_total, costo_unitario)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
@@ -270,13 +260,12 @@ class SistemaCafeApp(QMainWindow):
             self.ins_factor.clear()
             self.cargar_tabla_insumos()
             
-            QMessageBox.information(self, "Guardado", f"Insumo creado.\nCosto por {self.cmb_uni_uso.currentText()}: ${costo_unitario:.4f}")
+            QMessageBox.information(self, "Guardado", f"Listo.\nCosto por {self.cmb_uni_uso.currentText()}: ${costo_unitario:.4f}")
 
         except ValueError:
-            QMessageBox.warning(self, "Error", "Verifica que los campos numéricos sean correctos.")
+            QMessageBox.warning(self, "Error", "Revisar los números.")
 
     def cargar_tabla_insumos(self):
-        # Query con Joins para mostrar nombres de unidades
         query = '''
             SELECT i.id, i.nombre, 
                    (i.cantidad_envase || ' ' || u1.nombre), 
@@ -299,9 +288,7 @@ class SistemaCafeApp(QMainWindow):
                 if col_idx == 3: val = f"${col_data:.2f}"
                 self.tabla_insumos.setItem(row_idx, col_idx, QTableWidgetItem(val))
 
-    # -------------------------------------------------------------------------
-    # PESTAÑA 2: CONFIGURACIÓN
-    # -------------------------------------------------------------------------
+    # Pestaña de config
     def init_tab_config(self):
         tab = QWidget()
         layout = QHBoxLayout()
@@ -317,25 +304,25 @@ class SistemaCafeApp(QMainWindow):
             group.setLayout(vbox)
             return group
 
-        # 1. Categorias
+        # Categorias
         self.txt_cat = QLineEdit()
         self.list_cat = QListWidget()
         btn_cat = QPushButton("+")
         btn_cat.clicked.connect(lambda: self.add_simple("categorias", self.txt_cat))
         
-        # 2. Subcategorias
+        # Subcategorias
         self.txt_sub = QLineEdit()
         self.list_sub = QListWidget()
         btn_sub = QPushButton("+")
         btn_sub.clicked.connect(lambda: self.add_simple("subcategorias", self.txt_sub))
 
-        # 3. Tamaños
+        # Tamanos
         self.txt_tam = QLineEdit()
         self.list_tam = QListWidget()
         btn_tam = QPushButton("+")
         btn_tam.clicked.connect(lambda: self.add_simple("tamanos", self.txt_tam))
 
-        # 4. Unidades de Medida
+        # Unidades
         self.txt_uni = QLineEdit()
         self.list_uni = QListWidget()
         btn_uni = QPushButton("+")
@@ -364,20 +351,18 @@ class SistemaCafeApp(QMainWindow):
             datos = self.db.traer_datos(f"SELECT nombre FROM {tabla}")
             for d in datos: lista_widget.addItem(d[0])
 
-    # -------------------------------------------------------------------------
-    # PESTAÑA 3: PRODUCTOS Y RECETAS
-    # -------------------------------------------------------------------------
+    # Pestaña productos
     def init_tab_productos(self):
         tab = QWidget()
         layout = QHBoxLayout()
 
-        # Panel Izquierdo
+        # Panel izq
         left_panel = QGroupBox("1. Definir Producto")
         l_layout = QVBoxLayout()
         self.prod_nombre = QLineEdit()
         self.prod_nombre.setPlaceholderText("Nombre del Producto")
         self.prod_instrucciones = QTextEdit()
-        self.prod_instrucciones.setPlaceholderText("Instrucciones generales de preparación...")
+        self.prod_instrucciones.setPlaceholderText("Instrucciones generales...")
         
         btn_crear = QPushButton("Crear Producto")
         btn_crear.clicked.connect(self.crear_producto)
@@ -390,7 +375,7 @@ class SistemaCafeApp(QMainWindow):
         l_layout.addStretch()
         left_panel.setLayout(l_layout)
 
-        # Panel Derecho
+        # Panel der
         right_panel = QGroupBox("2. Configurar Ingredientes por Tamaño")
         r_layout = QVBoxLayout()
         
@@ -418,7 +403,7 @@ class SistemaCafeApp(QMainWindow):
         h_ing.addWidget(self.lbl_unidad_insumo)
         h_ing.addWidget(btn_add_ing)
 
-        # Al seleccionar insumo, mostrar su unidad de uso
+        # Al cambiar insumo
         self.sel_insumo_receta.currentIndexChanged.connect(self.actualizar_lbl_unidad)
 
         self.tabla_receta = QTableWidget()
@@ -459,7 +444,7 @@ class SistemaCafeApp(QMainWindow):
             self.sel_tamano.addItem(t[1], t[0])
 
         self.sel_insumo_receta.clear()
-        # Traer nombre e unidad de uso para mostrar al usuario
+        # Traer datos
         query = "SELECT i.id, i.nombre, u.nombre FROM insumos i JOIN unidades u ON i.unidad_uso_id = u.id"
         for i in self.db.traer_datos(query):
             self.sel_insumo_receta.addItem(f"{i[1]}", {"id": i[0], "unidad": i[2]})
@@ -488,7 +473,7 @@ class SistemaCafeApp(QMainWindow):
     def agregar_ingrediente(self):
         pid = self.sel_producto.currentData()
         tid = self.sel_tamano.currentData()
-        idata = self.sel_insumo_receta.currentData() # dict
+        idata = self.sel_insumo_receta.currentData() 
         cant = self.txt_cant_receta.text()
 
         receta_conf = self.db.traer_datos("SELECT id FROM receta_config WHERE producto_id=? AND tamano_id=?", (pid, tid))
@@ -499,7 +484,7 @@ class SistemaCafeApp(QMainWindow):
                 self.txt_cant_receta.clear()
                 self.cargar_tabla_receta()
             except:
-                QMessageBox.warning(self, "Error", "Error al agregar. Verifica los datos.")
+                QMessageBox.warning(self, "Error", "Error al agregar.")
 
     def cargar_tabla_receta(self):
         self.tabla_receta.setRowCount(0)
@@ -532,9 +517,7 @@ class SistemaCafeApp(QMainWindow):
         self.tabla_receta.setItem(rows, 1, QTableWidgetItem("COSTO TOTAL RECETA:"))
         self.tabla_receta.setItem(rows, 2, QTableWidgetItem(f"${total:.2f}"))
 
-    # -------------------------------------------------------------------------
-    # PESTAÑA 4: VISOR RECETARIO
-    # -------------------------------------------------------------------------
+    # Pestaña visor
     def init_tab_visor(self):
         tab = QWidget()
         layout = QVBoxLayout()
