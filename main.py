@@ -103,7 +103,7 @@ class SistemaCafeApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.db = DataBase()
-        self.setWindowTitle("Sistema Café ERP 2.0")
+        self.setWindowTitle("Sistema Café - Recetario y Gestión de Insumos")
         self.setGeometry(50, 50, 1200, 800)
         
         self.tabs = QTabWidget()
