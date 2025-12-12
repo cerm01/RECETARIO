@@ -11,7 +11,7 @@ from PyQt5.QtGui import QFont, QColor
 
 # Clase para la base de datos
 class DataBase:
-    def __init__(self, db_name="sistema_cafe_v2.db"):
+    def __init__(self, db_name="db_recetario.db"): # Cambio realizado: nombre de la BD actualizado
         self.conn = sqlite3.connect(db_name)
         self.conn.execute("PRAGMA foreign_keys = 1")
         self.cursor = self.conn.cursor()
