@@ -30,8 +30,6 @@ class DataBase:
         try:
             self.cursor.execute("SELECT categoria_id FROM subcategorias LIMIT 1")
         except sqlite3.OperationalError:
-            # Si da error es porque no existe la columna nueva o la tabla.
-            # Borramos solo subcategorias para recrearla con la estructura correcta.
             self.cursor.execute("DROP TABLE IF EXISTS subcategorias")
             self.conn.commit()
         # ---------------------------------------
@@ -128,11 +126,12 @@ class DataBase:
 
 # Widget reutilizable para CRUD simple (Categorias, Tamaños, Unidades)
 class ABMSimple(QWidget):
-    def __init__(self, titulo, tabla, db):
+    def __init__(self, titulo, tabla, db, callback_cambios=None):
         super().__init__()
         self.tabla_bd = tabla
         self.db = db
         self.id_seleccionado = None
+        self.callback_cambios = callback_cambios
         
         layout = QVBoxLayout()
         self.group = QGroupBox(titulo)
@@ -173,7 +172,7 @@ class ABMSimple(QWidget):
         self.tabla.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.tabla.setSelectionMode(QAbstractItemView.SingleSelection)
         self.tabla.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.tabla.hideColumn(0) # Ocultamos ID
+        self.tabla.hideColumn(0) 
         self.tabla.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.tabla.itemClicked.connect(self.seleccionar)
         
@@ -209,18 +208,24 @@ class ABMSimple(QWidget):
         self.btn_add.setEnabled(True)
         self.btn_update.setEnabled(False)
         self.btn_delete.setEnabled(False)
+    
+    def notificar(self):
+        if self.callback_cambios:
+            self.callback_cambios()
 
     def agregar(self):
         if self.txt_nombre.text():
             self.db.ejecutar(f"INSERT INTO {self.tabla_bd} (nombre) VALUES (?)", (self.txt_nombre.text(),))
             self.limpiar()
             self.cargar_datos()
+            self.notificar()
 
     def actualizar(self):
         if self.id_seleccionado and self.txt_nombre.text():
             self.db.ejecutar(f"UPDATE {self.tabla_bd} SET nombre=? WHERE id=?", (self.txt_nombre.text(), self.id_seleccionado))
             self.limpiar()
             self.cargar_datos()
+            self.notificar()
 
     def eliminar(self):
         if self.id_seleccionado:
@@ -229,8 +234,9 @@ class ABMSimple(QWidget):
                 self.db.ejecutar(f"DELETE FROM {self.tabla_bd} WHERE id=?", (self.id_seleccionado,))
                 self.limpiar()
                 self.cargar_datos()
+                self.notificar()
 
-# Widget específico para Subcategorías (Con ComboBox de Categoría)
+# Widget específico para Subcategorías
 class ABMSubcategorias(QWidget):
     def __init__(self, db):
         super().__init__()
@@ -551,7 +557,7 @@ class SistemaCafeApp(QMainWindow):
         self.ins_factor.clear()
         self.insumo_id_editar = None
         self.btn_guardar.setText("Guardar Insumo")
-        self.btn_guardar.setStyleSheet("background-color: #28a745; color: white;") # Verde
+        self.btn_guardar.setStyleSheet("background-color: #28a745; color: white;")
         self.tabla_insumos.clearSelection()
 
     def cargar_para_editar(self):
@@ -583,7 +589,7 @@ class SistemaCafeApp(QMainWindow):
         self.ins_factor.setText(str(reg[6]))
         
         self.btn_guardar.setText("Actualizar Insumo")
-        self.btn_guardar.setStyleSheet("background-color: #007bff; color: white;") # Azul
+        self.btn_guardar.setStyleSheet("background-color: #007bff; color: white;")
 
     def eliminar_insumo(self):
         rows = self.tabla_insumos.selectionModel().selectedRows()
@@ -700,11 +706,19 @@ class SistemaCafeApp(QMainWindow):
         tab = QWidget()
         layout = QGridLayout()
         
-        # Instancias de los ABMs
-        self.abm_categorias = ABMSimple("Categorías", "categorias", self.db)
+        self.abm_subcategorias = ABMSubcategorias(self.db)
+
+        # Función que se ejecuta cuando cambian las categorías
+        def actualizar_dependencias_categorias():
+            # Recargar combo en subcategorías
+            self.abm_subcategorias.cargar_categorias() 
+            # Recargar tabla de subcategorías (por si cambiaron nombres de categorías)
+            self.abm_subcategorias.cargar_datos()      
+
+        # Pasamos el callback a Categorías
+        self.abm_categorias = ABMSimple("Categorías", "categorias", self.db, callback_cambios=actualizar_dependencias_categorias)
         self.abm_tamanos = ABMSimple("Tamaños", "tamanos", self.db)
         self.abm_unidades = ABMSimple("Unidades de Medida", "unidades", self.db)
-        self.abm_subcategorias = ABMSubcategorias(self.db)
 
         # Distribución en la grilla 2x2
         layout.addWidget(self.abm_categorias, 0, 0)
@@ -715,12 +729,10 @@ class SistemaCafeApp(QMainWindow):
         tab.setLayout(layout)
         self.tabs.addTab(tab, "CONFIGURACIÓN")
 
-    # Pestaña productos (Sin cambios en lógica)
     def init_tab_productos(self):
         tab = QWidget()
         layout = QHBoxLayout()
 
-        # Panel izq
         left_panel = QGroupBox("1. Definir Producto")
         l_layout = QVBoxLayout()
         self.prod_nombre = QLineEdit()
@@ -739,7 +751,6 @@ class SistemaCafeApp(QMainWindow):
         l_layout.addStretch()
         left_panel.setLayout(l_layout)
 
-        # Panel der
         right_panel = QGroupBox("2. Configurar Ingredientes por Tamaño")
         r_layout = QVBoxLayout()
         
@@ -767,7 +778,6 @@ class SistemaCafeApp(QMainWindow):
         h_ing.addWidget(self.lbl_unidad_insumo)
         h_ing.addWidget(btn_add_ing)
 
-        # Al cambiar insumo
         self.sel_insumo_receta.currentIndexChanged.connect(self.actualizar_lbl_unidad)
 
         self.tabla_receta = QTableWidget()
