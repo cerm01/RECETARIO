@@ -483,7 +483,7 @@ class SistemaCafeApp(QMainWindow):
         layout.addWidget(crear_mini_crud("Unidades de Medida", "unidades", self.txt_uni, btn_uni, self.list_uni))
         
         tab.setLayout(layout)
-        self.tabs.addTab(tab, "2. CONFIGURACIÓN")
+        self.tabs.addTab(tab, "CONFIGURACIÓN")
 
     def add_simple(self, tabla, input_obj):
         val = input_obj.text()
@@ -571,7 +571,7 @@ class SistemaCafeApp(QMainWindow):
         splitter.addWidget(right_panel)
         layout.addWidget(splitter)
         tab.setLayout(layout)
-        self.tabs.addTab(tab, "3. PRODUCTOS Y RECETAS")
+        self.tabs.addTab(tab, "RECETAS")
 
         self.tabs.currentChanged.connect(self.al_cambiar_tab)
         self.sel_producto.currentIndexChanged.connect(self.cargar_tabla_receta)
@@ -686,7 +686,7 @@ class SistemaCafeApp(QMainWindow):
         layout.addLayout(h)
         layout.addWidget(self.v_text)
         tab.setLayout(layout)
-        self.tabs.addTab(tab, "4. VISOR RECETARIO")
+        self.tabs.addTab(tab, "RECETARIO")
         
         self.v_prod.currentIndexChanged.connect(self.cargar_tams_visor)
         self.v_tam.currentIndexChanged.connect(self.mostrar_receta)
