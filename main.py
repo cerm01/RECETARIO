@@ -5,7 +5,8 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QLabel, QLineEdit, QPushButton, 
                              QTableWidget, QTableWidgetItem, QTabWidget, 
                              QComboBox, QMessageBox, QHeaderView, QSplitter,
-                             QFormLayout, QGroupBox, QListWidget, QAbstractItemView, QTextEdit, QDialog)
+                             QFormLayout, QGroupBox, QListWidget, QAbstractItemView, 
+                             QTextEdit, QDialog, QGridLayout)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QColor
 
@@ -24,14 +25,30 @@ class DataBase:
         self.conn = sqlite3.connect(db_name)
         self.conn.execute("PRAGMA foreign_keys = 1")
         self.cursor = self.conn.cursor()
+        
+        # --- MIGRACIÓN SEGURA DE ESTRUCTURA ---
+        try:
+            self.cursor.execute("SELECT categoria_id FROM subcategorias LIMIT 1")
+        except sqlite3.OperationalError:
+            # Si da error es porque no existe la columna nueva o la tabla.
+            # Borramos solo subcategorias para recrearla con la estructura correcta.
+            self.cursor.execute("DROP TABLE IF EXISTS subcategorias")
+            self.conn.commit()
+        # ---------------------------------------
+
         self.crear_tablas()
 
     def crear_tablas(self):
         # Tablas de config
         self.cursor.execute('''CREATE TABLE IF NOT EXISTS categorias (id INTEGER PRIMARY KEY, nombre TEXT)''')
-        self.cursor.execute('''CREATE TABLE IF NOT EXISTS subcategorias (id INTEGER PRIMARY KEY, nombre TEXT)''')
         self.cursor.execute('''CREATE TABLE IF NOT EXISTS tamanos (id INTEGER PRIMARY KEY, nombre TEXT)''')
         self.cursor.execute('''CREATE TABLE IF NOT EXISTS unidades (id INTEGER PRIMARY KEY, nombre TEXT)''')
+        self.cursor.execute('''CREATE TABLE IF NOT EXISTS subcategorias (
+            id INTEGER PRIMARY KEY, 
+            nombre TEXT,
+            categoria_id INTEGER,
+            FOREIGN KEY(categoria_id) REFERENCES categorias(id)
+        )''')
         
         # Tabla de insumos
         self.cursor.execute('''CREATE TABLE IF NOT EXISTS insumos (
@@ -107,7 +124,248 @@ class DataBase:
     def traer_datos(self, query, params=()):
         return self.cursor.execute(query, params).fetchall()
 
-# Interfaz grafica
+# --- CLASES NUEVAS PARA GESTIÓN CRUD ---
+
+# Widget reutilizable para CRUD simple (Categorias, Tamaños, Unidades)
+class ABMSimple(QWidget):
+    def __init__(self, titulo, tabla, db):
+        super().__init__()
+        self.tabla_bd = tabla
+        self.db = db
+        self.id_seleccionado = None
+        
+        layout = QVBoxLayout()
+        self.group = QGroupBox(titulo)
+        vbox = QVBoxLayout()
+
+        # Formulario
+        h_in = QHBoxLayout()
+        self.txt_nombre = QLineEdit()
+        self.txt_nombre.setPlaceholderText("Nombre...")
+        h_in.addWidget(self.txt_nombre)
+        vbox.addLayout(h_in)
+
+        # Botones
+        h_btns = QHBoxLayout()
+        self.btn_add = QPushButton("Agregar")
+        self.btn_add.clicked.connect(self.agregar)
+        self.btn_update = QPushButton("Actualizar")
+        self.btn_update.clicked.connect(self.actualizar)
+        self.btn_update.setEnabled(False)
+        self.btn_delete = QPushButton("Eliminar")
+        self.btn_delete.setStyleSheet("background-color: #dc3545;")
+        self.btn_delete.clicked.connect(self.eliminar)
+        self.btn_delete.setEnabled(False)
+        self.btn_clear = QPushButton("Limpiar")
+        self.btn_clear.setStyleSheet("background-color: #6c757d;")
+        self.btn_clear.clicked.connect(self.limpiar)
+        
+        h_btns.addWidget(self.btn_add)
+        h_btns.addWidget(self.btn_update)
+        h_btns.addWidget(self.btn_delete)
+        h_btns.addWidget(self.btn_clear)
+        vbox.addLayout(h_btns)
+
+        # Tabla Visual
+        self.tabla = QTableWidget()
+        self.tabla.setColumnCount(2)
+        self.tabla.setHorizontalHeaderLabels(["ID", "Nombre"])
+        self.tabla.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.tabla.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.tabla.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.tabla.hideColumn(0) # Ocultamos ID
+        self.tabla.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.tabla.itemClicked.connect(self.seleccionar)
+        
+        vbox.addWidget(self.tabla)
+        self.group.setLayout(vbox)
+        layout.addWidget(self.group)
+        self.setLayout(layout)
+        
+        self.cargar_datos()
+
+    def cargar_datos(self):
+        self.tabla.setRowCount(0)
+        datos = self.db.traer_datos(f"SELECT id, nombre FROM {self.tabla_bd}")
+        for i, (fid, nom) in enumerate(datos):
+            self.tabla.insertRow(i)
+            self.tabla.setItem(i, 0, QTableWidgetItem(str(fid)))
+            self.tabla.setItem(i, 1, QTableWidgetItem(nom))
+
+    def seleccionar(self):
+        row = self.tabla.currentRow()
+        if row >= 0:
+            self.id_seleccionado = self.tabla.item(row, 0).text()
+            nombre = self.tabla.item(row, 1).text()
+            self.txt_nombre.setText(nombre)
+            self.btn_add.setEnabled(False)
+            self.btn_update.setEnabled(True)
+            self.btn_delete.setEnabled(True)
+
+    def limpiar(self):
+        self.txt_nombre.clear()
+        self.id_seleccionado = None
+        self.tabla.clearSelection()
+        self.btn_add.setEnabled(True)
+        self.btn_update.setEnabled(False)
+        self.btn_delete.setEnabled(False)
+
+    def agregar(self):
+        if self.txt_nombre.text():
+            self.db.ejecutar(f"INSERT INTO {self.tabla_bd} (nombre) VALUES (?)", (self.txt_nombre.text(),))
+            self.limpiar()
+            self.cargar_datos()
+
+    def actualizar(self):
+        if self.id_seleccionado and self.txt_nombre.text():
+            self.db.ejecutar(f"UPDATE {self.tabla_bd} SET nombre=? WHERE id=?", (self.txt_nombre.text(), self.id_seleccionado))
+            self.limpiar()
+            self.cargar_datos()
+
+    def eliminar(self):
+        if self.id_seleccionado:
+            confirm = QMessageBox.question(self, "Borrar", "¿Seguro?", QMessageBox.Yes | QMessageBox.No)
+            if confirm == QMessageBox.Yes:
+                self.db.ejecutar(f"DELETE FROM {self.tabla_bd} WHERE id=?", (self.id_seleccionado,))
+                self.limpiar()
+                self.cargar_datos()
+
+# Widget específico para Subcategorías (Con ComboBox de Categoría)
+class ABMSubcategorias(QWidget):
+    def __init__(self, db):
+        super().__init__()
+        self.db = db
+        self.id_seleccionado = None
+        
+        layout = QVBoxLayout()
+        self.group = QGroupBox("Gestión de Subcategorías")
+        vbox = QVBoxLayout()
+
+        # Formulario
+        form = QFormLayout()
+        self.txt_nombre = QLineEdit()
+        self.cmb_categoria = QComboBox()
+        
+        form.addRow("Nombre Subcategoría:", self.txt_nombre)
+        form.addRow("Pertenece a Categoría:", self.cmb_categoria)
+        vbox.addLayout(form)
+
+        # Botones
+        h_btns = QHBoxLayout()
+        self.btn_add = QPushButton("Agregar")
+        self.btn_add.clicked.connect(self.agregar)
+        self.btn_update = QPushButton("Actualizar")
+        self.btn_update.clicked.connect(self.actualizar)
+        self.btn_update.setEnabled(False)
+        self.btn_delete = QPushButton("Eliminar")
+        self.btn_delete.setStyleSheet("background-color: #dc3545;")
+        self.btn_delete.clicked.connect(self.eliminar)
+        self.btn_delete.setEnabled(False)
+        self.btn_clear = QPushButton("Limpiar")
+        self.btn_clear.setStyleSheet("background-color: #6c757d;")
+        self.btn_clear.clicked.connect(self.limpiar)
+        
+        h_btns.addWidget(self.btn_add)
+        h_btns.addWidget(self.btn_update)
+        h_btns.addWidget(self.btn_delete)
+        h_btns.addWidget(self.btn_clear)
+        vbox.addLayout(h_btns)
+
+        # Tabla
+        self.tabla = QTableWidget()
+        self.tabla.setColumnCount(4) # ID, Nombre, NombreCat, IDCat
+        self.tabla.setHorizontalHeaderLabels(["ID", "Subcategoría", "Categoría", "id_cat"])
+        self.tabla.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.tabla.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.tabla.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.tabla.hideColumn(0) 
+        self.tabla.hideColumn(3)
+        self.tabla.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.tabla.itemClicked.connect(self.seleccionar)
+        
+        vbox.addWidget(self.tabla)
+        self.group.setLayout(vbox)
+        layout.addWidget(self.group)
+        self.setLayout(layout)
+        
+        self.cargar_categorias()
+        self.cargar_datos()
+
+    def cargar_categorias(self):
+        id_actual = self.cmb_categoria.currentData()
+        self.cmb_categoria.clear()
+        cats = self.db.traer_datos("SELECT id, nombre FROM categorias")
+        for c in cats:
+            self.cmb_categoria.addItem(c[1], c[0])
+        
+        # Restaurar selección si existe
+        if id_actual:
+            idx = self.cmb_categoria.findData(id_actual)
+            if idx >= 0: self.cmb_categoria.setCurrentIndex(idx)
+
+    def cargar_datos(self):
+        self.tabla.setRowCount(0)
+        query = '''SELECT s.id, s.nombre, c.nombre, c.id 
+                   FROM subcategorias s 
+                   LEFT JOIN categorias c ON s.categoria_id = c.id'''
+        datos = self.db.traer_datos(query)
+        for i, row in enumerate(datos):
+            self.tabla.insertRow(i)
+            self.tabla.setItem(i, 0, QTableWidgetItem(str(row[0])))
+            self.tabla.setItem(i, 1, QTableWidgetItem(row[1]))
+            self.tabla.setItem(i, 2, QTableWidgetItem(row[2] if row[2] else "Sin Cat"))
+            self.tabla.setItem(i, 3, QTableWidgetItem(str(row[3]) if row[3] else ""))
+
+    def seleccionar(self):
+        row = self.tabla.currentRow()
+        if row >= 0:
+            self.id_seleccionado = self.tabla.item(row, 0).text()
+            self.txt_nombre.setText(self.tabla.item(row, 1).text())
+            
+            id_cat = self.tabla.item(row, 3).text()
+            if id_cat:
+                index = self.cmb_categoria.findData(int(id_cat))
+                self.cmb_categoria.setCurrentIndex(index)
+                
+            self.btn_add.setEnabled(False)
+            self.btn_update.setEnabled(True)
+            self.btn_delete.setEnabled(True)
+
+    def limpiar(self):
+        self.txt_nombre.clear()
+        self.id_seleccionado = None
+        self.tabla.clearSelection()
+        self.btn_add.setEnabled(True)
+        self.btn_update.setEnabled(False)
+        self.btn_delete.setEnabled(False)
+
+    def agregar(self):
+        cat_id = self.cmb_categoria.currentData()
+        if self.txt_nombre.text() and cat_id:
+            self.db.ejecutar("INSERT INTO subcategorias (nombre, categoria_id) VALUES (?,?)", 
+                             (self.txt_nombre.text(), cat_id))
+            self.limpiar()
+            self.cargar_datos()
+        else:
+            QMessageBox.warning(self, "Error", "Nombre y Categoría requeridos")
+
+    def actualizar(self):
+        cat_id = self.cmb_categoria.currentData()
+        if self.id_seleccionado and self.txt_nombre.text() and cat_id:
+            self.db.ejecutar("UPDATE subcategorias SET nombre=?, categoria_id=? WHERE id=?", 
+                             (self.txt_nombre.text(), cat_id, self.id_seleccionado))
+            self.limpiar()
+            self.cargar_datos()
+
+    def eliminar(self):
+        if self.id_seleccionado:
+            confirm = QMessageBox.question(self, "Borrar", "¿Seguro?", QMessageBox.Yes | QMessageBox.No)
+            if confirm == QMessageBox.Yes:
+                self.db.ejecutar("DELETE FROM subcategorias WHERE id=?", (self.id_seleccionado,))
+                self.limpiar()
+                self.cargar_datos()
+
+# Interfaz grafica Principal
 class SistemaCafeApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -440,67 +698,24 @@ class SistemaCafeApp(QMainWindow):
     # Pestaña de config
     def init_tab_config(self):
         tab = QWidget()
-        layout = QHBoxLayout()
+        layout = QGridLayout()
         
-        def crear_mini_crud(titulo, tabla, input_field, btn_action, lista_widget):
-            group = QGroupBox(titulo)
-            vbox = QVBoxLayout()
-            h_in = QHBoxLayout()
-            h_in.addWidget(input_field)
-            h_in.addWidget(btn_action)
-            vbox.addLayout(h_in)
-            vbox.addWidget(lista_widget)
-            group.setLayout(vbox)
-            return group
+        # Instancias de los ABMs
+        self.abm_categorias = ABMSimple("Categorías", "categorias", self.db)
+        self.abm_tamanos = ABMSimple("Tamaños", "tamanos", self.db)
+        self.abm_unidades = ABMSimple("Unidades de Medida", "unidades", self.db)
+        self.abm_subcategorias = ABMSubcategorias(self.db)
 
-        # Categorias
-        self.txt_cat = QLineEdit()
-        self.list_cat = QListWidget()
-        btn_cat = QPushButton("+")
-        btn_cat.clicked.connect(lambda: self.add_simple("categorias", self.txt_cat))
-        
-        # Subcategorias
-        self.txt_sub = QLineEdit()
-        self.list_sub = QListWidget()
-        btn_sub = QPushButton("+")
-        btn_sub.clicked.connect(lambda: self.add_simple("subcategorias", self.txt_sub))
-
-        # Tamanos
-        self.txt_tam = QLineEdit()
-        self.list_tam = QListWidget()
-        btn_tam = QPushButton("+")
-        btn_tam.clicked.connect(lambda: self.add_simple("tamanos", self.txt_tam))
-
-        # Unidades
-        self.txt_uni = QLineEdit()
-        self.list_uni = QListWidget()
-        btn_uni = QPushButton("+")
-        btn_uni.clicked.connect(lambda: self.add_simple("unidades", self.txt_uni))
-
-        layout.addWidget(crear_mini_crud("Categorías", "categorias", self.txt_cat, btn_cat, self.list_cat))
-        layout.addWidget(crear_mini_crud("Subcategorías", "subcategorias", self.txt_sub, btn_sub, self.list_sub))
-        layout.addWidget(crear_mini_crud("Tamaños", "tamanos", self.txt_tam, btn_tam, self.list_tam))
-        layout.addWidget(crear_mini_crud("Unidades de Medida", "unidades", self.txt_uni, btn_uni, self.list_uni))
+        # Distribución en la grilla 2x2
+        layout.addWidget(self.abm_categorias, 0, 0)
+        layout.addWidget(self.abm_subcategorias, 0, 1)
+        layout.addWidget(self.abm_tamanos, 1, 0)
+        layout.addWidget(self.abm_unidades, 1, 1)
         
         tab.setLayout(layout)
         self.tabs.addTab(tab, "CONFIGURACIÓN")
 
-    def add_simple(self, tabla, input_obj):
-        val = input_obj.text()
-        if val:
-            self.db.ejecutar(f"INSERT INTO {tabla} (nombre) VALUES (?)", (val,))
-            input_obj.clear()
-            self.refresh_config_lists()
-            if tabla == "unidades": self.cargar_unidades_combo()
-
-    def refresh_config_lists(self):
-        for tabla, lista_widget in [("categorias", self.list_cat), ("subcategorias", self.list_sub), 
-                                    ("tamanos", self.list_tam), ("unidades", self.list_uni)]:
-            lista_widget.clear()
-            datos = self.db.traer_datos(f"SELECT nombre FROM {tabla}")
-            for d in datos: lista_widget.addItem(d[0])
-
-    # Pestaña productos
+    # Pestaña productos (Sin cambios en lógica)
     def init_tab_productos(self):
         tab = QWidget()
         layout = QHBoxLayout()
@@ -578,10 +793,20 @@ class SistemaCafeApp(QMainWindow):
         self.sel_tamano.currentIndexChanged.connect(self.cargar_tabla_receta)
 
     def al_cambiar_tab(self, index):
-        if index == 0: self.cargar_unidades_combo(); self.cargar_tabla_insumos()
-        if index == 1: self.refresh_config_lists()
-        if index == 2: self.recargar_combos_receta()
-        if index == 3: self.recargar_visor()
+        if index == 0: 
+            self.cargar_unidades_combo()
+            self.cargar_tabla_insumos()
+        if index == 1: 
+            # Recargar los datos de los widgets de configuración
+            self.abm_categorias.cargar_datos()
+            self.abm_tamanos.cargar_datos()
+            self.abm_unidades.cargar_datos()
+            self.abm_subcategorias.cargar_categorias() # Recarga el combo por si hay nuevas categorias
+            self.abm_subcategorias.cargar_datos()
+        if index == 2: 
+            self.recargar_combos_receta()
+        if index == 3: 
+            self.recargar_visor()
 
     def recargar_combos_receta(self):
         self.sel_producto.clear()
