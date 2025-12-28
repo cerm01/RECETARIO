@@ -28,11 +28,9 @@ class DataBase:
         self.crear_tablas()
 
     def migracion_inicial(self):
-        # Migración para agregar la columna ID a receta_ingredientes si no existe
         try:
             self.cursor.execute("SELECT id FROM receta_ingredientes LIMIT 1")
         except sqlite3.OperationalError:
-            # Si falla, es que no existe el ID. La forma más segura en SQLite es recrear la tabla
             print("Actualizando estructura de tabla ingredientes...")
             self.cursor.execute("CREATE TABLE IF NOT EXISTS receta_ingredientes_new (id INTEGER PRIMARY KEY AUTOINCREMENT, receta_config_id INTEGER, insumo_id INTEGER, cantidad_necesaria REAL)")
             try:
@@ -51,15 +49,7 @@ class DataBase:
         self.cursor.execute('''CREATE TABLE IF NOT EXISTS productos (id INTEGER PRIMARY KEY, nombre TEXT, instrucciones TEXT, categoria_id INTEGER, subcategoria_id INTEGER, FOREIGN KEY(categoria_id) REFERENCES categorias(id), FOREIGN KEY(subcategoria_id) REFERENCES subcategorias(id))''')
         self.cursor.execute('''CREATE TABLE IF NOT EXISTS receta_pasos (id INTEGER PRIMARY KEY, producto_id INTEGER, orden INTEGER, descripcion TEXT, FOREIGN KEY(producto_id) REFERENCES productos(id) ON DELETE CASCADE)''')
         self.cursor.execute('''CREATE TABLE IF NOT EXISTS receta_config (id INTEGER PRIMARY KEY, producto_id INTEGER, tamano_id INTEGER, UNIQUE(producto_id, tamano_id), FOREIGN KEY(producto_id) REFERENCES productos(id) ON DELETE CASCADE, FOREIGN KEY(tamano_id) REFERENCES tamanos(id))''')
-        
-        # Tabla de ingredientes con ID único para manejar duplicados (ej: varios Shots)
-        self.cursor.execute('''CREATE TABLE IF NOT EXISTS receta_ingredientes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            receta_config_id INTEGER, 
-            insumo_id INTEGER, 
-            cantidad_necesaria REAL, 
-            FOREIGN KEY(receta_config_id) REFERENCES receta_config(id) ON DELETE CASCADE, 
-            FOREIGN KEY(insumo_id) REFERENCES insumos(id))''')
+        self.cursor.execute('''CREATE TABLE IF NOT EXISTS receta_ingredientes (id INTEGER PRIMARY KEY AUTOINCREMENT, receta_config_id INTEGER, insumo_id INTEGER, cantidad_necesaria REAL, FOREIGN KEY(receta_config_id) REFERENCES receta_config(id) ON DELETE CASCADE, FOREIGN KEY(insumo_id) REFERENCES insumos(id))''')
         
         self.cursor.execute("SELECT count(*) FROM unidades")
         if self.cursor.fetchone()[0] == 0:
@@ -83,7 +73,6 @@ class DataBase:
         query = "SELECT i.id, i.nombre, u.nombre FROM insumos i JOIN unidades u ON i.unidad_uso_id = u.id WHERE i.nombre LIKE ?"
         return self.traer_datos(query, (f'%{texto}%',))
 
-# --- Clases ABM ---
 class ABMSimple(QWidget):
     def __init__(self, titulo, tabla, db, callback_cambios=None):
         super().__init__()
@@ -186,7 +175,6 @@ class ABMSubcategorias(QWidget):
             if QMessageBox.question(self, "Borrar", "¿Seguro?", QMessageBox.Yes|QMessageBox.No) == QMessageBox.Yes:
                 self.db.ejecutar("DELETE FROM subcategorias WHERE id=?", (self.id_seleccionado,)); self.limpiar(); self.cargar_datos()
 
-# --- Aplicación Principal ---
 class SistemaCafeApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -342,7 +330,6 @@ class SistemaCafeApp(QMainWindow):
     def ejecutar_clonado(self, d_id, h_id):
         self.db.ejecutar("INSERT OR IGNORE INTO receta_config (producto_id, tamano_id) VALUES (?,?)", (self.producto_seleccionado_id, h_id)); c_d = self.db.traer_datos("SELECT id FROM receta_config WHERE producto_id=? AND tamano_id=?", (self.producto_seleccionado_id, d_id))[0][0]; c_h = self.db.traer_datos("SELECT id FROM receta_config WHERE producto_id=? AND tamano_id=?", (self.producto_seleccionado_id, h_id))[0][0]
         for row in self.db.traer_datos("SELECT insumo_id, cantidad_necesaria FROM receta_ingredientes WHERE receta_config_id=?", (c_d,)):
-            # En clonación usamos INSERT simple para permitir duplicados si el original los tiene
             self.db.ejecutar("INSERT INTO receta_ingredientes (receta_config_id, insumo_id, cantidad_necesaria) VALUES (?, ?, ?)", (c_h, row[0], row[1]))
         self.cargar_tabla_receta()
 
@@ -368,11 +355,9 @@ class SistemaCafeApp(QMainWindow):
         self.db.ejecutar("INSERT OR IGNORE INTO receta_config (producto_id, tamano_id) VALUES (?,?)", (self.producto_seleccionado_id, t_id)); rc_id = self.db.traer_datos("SELECT id FROM receta_config WHERE producto_id=? AND tamano_id=?", (self.producto_seleccionado_id, t_id))[0][0]
         
         if self.id_ingrediente_editar:
-            # Usar el ID único del ingrediente para actualizar la fila específica
             self.db.ejecutar("UPDATE receta_ingredientes SET insumo_id=?, cantidad_necesaria=? WHERE id=?", (d['id'], float(c), self.id_ingrediente_editar))
             self.id_ingrediente_editar = None
         else:
-            # Insertar como nueva fila
             self.db.ejecutar("INSERT INTO receta_ingredientes (receta_config_id, insumo_id, cantidad_necesaria) VALUES (?,?,?)", (rc_id, d['id'], float(c)))
         
         self.txt_cant_receta.clear(); self.btn_add_ing.setText("+"); self.btn_add_ing.setStyleSheet("background-color: #28a745;"); self.cargar_tabla_receta()
@@ -380,30 +365,64 @@ class SistemaCafeApp(QMainWindow):
     def borrar_ingrediente(self):
         row = self.tabla_receta.currentRow()
         if row >= 0 and row < self.tabla_receta.rowCount() - 1:
-            # Borrar usando el ID único del ingrediente (columna 0)
             id_ing = self.tabla_receta.item(row, 0).text()
             self.db.ejecutar("DELETE FROM receta_ingredientes WHERE id=?", (id_ing,))
             self.cargar_tabla_receta()
 
     def cargar_tabla_receta(self):
-        # Limpieza total para asegurar que no hay duplicados visuales
         self.tabla_receta.setRowCount(0); self.btn_add_ing.setText("+"); self.btn_add_ing.setStyleSheet("background-color: #28a745;"); self.id_ingrediente_editar = None
         if not self.producto_seleccionado_id or not self.sel_tamano.currentData(): return
         query = 'SELECT ri.id, ri.insumo_id, i.nombre, ri.cantidad_necesaria, u.nombre, i.costo_unitario FROM receta_ingredientes ri JOIN insumos i ON ri.insumo_id = i.id JOIN unidades u ON i.unidad_uso_id = u.id JOIN receta_config rc ON ri.receta_config_id = rc.id WHERE rc.producto_id = ? AND rc.tamano_id = ?'
         datos = self.db.traer_datos(query, (self.producto_seleccionado_id, self.sel_tamano.currentData())); total = 0
         for i, row in enumerate(datos):
             self.tabla_receta.insertRow(i); cp = row[3] * row[5]; total += cp
-            # Guardamos IDs en columnas ocultas 0 y 1
             self.tabla_receta.setItem(i, 0, QTableWidgetItem(str(row[0]))); self.tabla_receta.setItem(i, 1, QTableWidgetItem(str(row[1])))
             self.tabla_receta.setItem(i, 2, QTableWidgetItem(row[2])); self.tabla_receta.setItem(i, 3, QTableWidgetItem(f"{row[3]} {row[4]}")); self.tabla_receta.setItem(i, 4, QTableWidgetItem(f"${cp:.2f}"))
         r = self.tabla_receta.rowCount(); self.tabla_receta.insertRow(r); self.tabla_receta.setItem(r, 2, QTableWidgetItem("TOTAL:")); self.tabla_receta.setItem(r, 4, QTableWidgetItem(f"${total:.2f}"))
 
+    # --- INICIO DE CAMBIOS EN PESTAÑA RECETARIO ---
     def init_tab_visor(self):
-        tab = QWidget(); layout = QVBoxLayout(); h = QHBoxLayout(); self.v_prod = QComboBox(); self.v_tam = QComboBox(); self.v_prod.setStyleSheet("font-size: 18px; padding: 5px;"); self.v_tam.setStyleSheet("font-size: 18px; padding: 5px;"); h.addWidget(QLabel("Producto:")); h.addWidget(self.v_prod, 1); h.addWidget(QLabel("Tamaño:")); h.addWidget(self.v_tam, 1); self.v_text = QTextEdit(); self.v_text.setReadOnly(True); layout.addLayout(h); layout.addWidget(self.v_text); tab.setLayout(layout); self.tabs.addTab(tab, "RECETARIO"); self.v_prod.currentIndexChanged.connect(self.cargar_tams_visor); self.v_tam.currentIndexChanged.connect(self.mostrar_receta_final)
+        tab = QWidget(); layout = QVBoxLayout()
+        
+        # Panel de búsqueda y filtros con fuentes más grandes
+        search_layout = QHBoxLayout()
+        self.txt_buscar_visor = QLineEdit()
+        self.txt_buscar_visor.setPlaceholderText("Buscar por nombre, categoría o subcategoría...")
+        self.txt_buscar_visor.setStyleSheet("font-size: 16px; padding: 8px;")
+        self.txt_buscar_visor.textChanged.connect(self.recargar_visor) # Filtra en tiempo real
+        
+        self.v_prod = QComboBox()
+        self.v_tam = QComboBox()
+        self.v_prod.setStyleSheet("font-size: 18px; padding: 5px;")
+        self.v_tam.setStyleSheet("font-size: 18px; padding: 5px;")
+        
+        search_layout.addWidget(QLabel("🔍")); search_layout.addWidget(self.txt_buscar_visor, 2)
+        search_layout.addWidget(QLabel("Producto:")); search_layout.addWidget(self.v_prod, 2)
+        search_layout.addWidget(QLabel("Tamaño:")); search_layout.addWidget(self.v_tam, 1)
+        
+        # Visor de texto con fuente base grande
+        self.v_text = QTextEdit()
+        self.v_text.setReadOnly(True)
+        f_visor = QFont(); f_visor.setPointSize(16); self.v_text.setFont(f_visor)
+        
+        layout.addLayout(search_layout); layout.addWidget(self.v_text); tab.setLayout(layout); self.tabs.addTab(tab, "RECETARIO")
+        self.v_prod.currentIndexChanged.connect(self.cargar_tams_visor); self.v_tam.currentIndexChanged.connect(self.mostrar_receta_final)
 
     def recargar_visor(self):
+        texto = self.txt_buscar_visor.text()
         self.v_prod.clear()
-        for p in self.db.traer_datos("SELECT id, nombre FROM productos ORDER BY nombre"): self.v_prod.addItem(p[1], p[0])
+        # Query que filtra por nombre del producto, nombre de categoría o nombre de subcategoría
+        query = """
+            SELECT p.id, p.nombre 
+            FROM productos p
+            LEFT JOIN categorias c ON p.categoria_id = c.id
+            LEFT JOIN subcategorias s ON p.subcategoria_id = s.id
+            WHERE p.nombre LIKE ? OR c.nombre LIKE ? OR s.nombre LIKE ?
+            ORDER BY p.nombre
+        """
+        params = (f'%{texto}%', f'%{texto}%', f'%{texto}%')
+        for p in self.db.traer_datos(query, params): 
+            self.v_prod.addItem(p[1], p[0])
 
     def cargar_tams_visor(self):
         self.v_tam.clear(); p_id = self.v_prod.currentData()
@@ -413,14 +432,25 @@ class SistemaCafeApp(QMainWindow):
     def mostrar_receta_final(self):
         p_id = self.v_prod.currentData(); t_id = self.v_tam.currentData()
         if not p_id: return self.v_text.clear()
-        p = self.db.traer_datos("SELECT nombre, (SELECT nombre FROM categorias WHERE id=productos.categoria_id) FROM productos WHERE id=?", (p_id,))[0]; html = f"<h1 style='color:#007BFF'>{p[0]}</h1><b>Categoría:</b> {p[1] if p[1] else 'General'}<hr>"
+        p = self.db.traer_datos("SELECT nombre, (SELECT nombre FROM categorias WHERE id=productos.categoria_id) FROM productos WHERE id=?", (p_id,))[0]
+        
+        # Estilos HTML ajustados para letra más legible
+        html = f"<h1 style='color:#007BFF; font-size: 28px;'>{p[0]}</h1>"
+        html += f"<p style='font-size: 18px;'><b>Categoría:</b> {p[1] if p[1] else 'General'}</p><hr>"
+        
         if t_id:
-            html += "<h3 style='color:#28a745'>INGREDIENTES:</h3><ul>"; ings = self.db.traer_datos('SELECT i.nombre, r.cantidad_necesaria, u.nombre, i.costo_unitario FROM receta_ingredientes r JOIN insumos i ON r.insumo_id = i.id JOIN unidades u ON i.unidad_uso_id = u.id JOIN receta_config rc ON r.receta_config_id = rc.id WHERE rc.producto_id = ? AND rc.tamano_id = ?', (p_id, t_id)); costo = 0
-            for ing in ings: html += f"<li><b>{ing[0]}:</b> {ing[1]} {ing[2]}</li>"; costo += ing[1] * ing[3]
-            html += f"</ul><p><i>Costo: ${costo:.2f}</i></p>"
-        html += "<hr><h3 style='color:#17a2b8'>PREPARACIÓN:</h3><ol>"; pasos = self.db.traer_datos("SELECT descripcion FROM receta_pasos WHERE producto_id=? ORDER BY orden", (p_id,))
-        for paso in pasos: html += f"<li>{paso[0]}</li>"
+            html += "<h3 style='color:#28a745; font-size: 22px;'>INGREDIENTES:</h3><ul style='font-size: 18px;'>"
+            ings = self.db.traer_datos('SELECT i.nombre, r.cantidad_necesaria, u.nombre, i.costo_unitario FROM receta_ingredientes r JOIN insumos i ON r.insumo_id = i.id JOIN unidades u ON i.unidad_uso_id = u.id JOIN receta_config rc ON r.receta_config_id = rc.id WHERE rc.producto_id = ? AND rc.tamano_id = ?', (p_id, t_id)); costo = 0
+            for ing in ings: 
+                html += f"<li><b>{ing[0]}:</b> {ing[1]} {ing[2]}</li>"; costo += ing[1] * ing[3]
+            html += f"</ul><p style='font-size: 18px;'><i>Costo estimado: ${costo:.2f}</i></p>"
+            
+        html += "<hr><h3 style='color:#17a2b8; font-size: 22px;'>PREPARACIÓN:</h3><ol style='font-size: 18px;'>"
+        pasos = self.db.traer_datos("SELECT descripcion FROM receta_pasos WHERE producto_id=? ORDER BY orden", (p_id,))
+        for paso in pasos: 
+            html += f"<li>{paso[0]}</li>"
         html += "</ol>"; self.v_text.setHtml(html)
+    # --- FIN DE CAMBIOS ---
 
 if __name__ == '__main__':
     app = QApplication(sys.argv); window = SistemaCafeApp(); window.show(); sys.exit(app.exec_())
